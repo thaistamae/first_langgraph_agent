@@ -1,4 +1,5 @@
 langgraph
 langchain
 requests
-python-dotenv 
+python-dotenv
+gradio
