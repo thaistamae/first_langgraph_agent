@@ -1,5 +1,8 @@
+python-dotenv
+requests
 langgraph
 langchain
-requests
-python-dotenv
+langchain-core
+pandas
+plotly
 gradio
