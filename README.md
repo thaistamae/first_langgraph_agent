@@ -5,7 +5,7 @@ colorFrom: purple
 colorTo: purple
 sdk: gradio
 sdk_version: 5.22.0
-app_file: unified_app.py
+app_file: app.py
 pinned: false
 ---
 
@@ -43,15 +43,10 @@ RAPIDAPI_KEY=your_api_key_here
 
 For the combined interface that handles both price and chart queries:
 ```bash
-python unified_app.py
+python app.py
 ```
 
 ### Individual Interfaces
-
-For current price information only:
-```bash
-python app.py
-```
 
 For historical charts only:
 ```bash
@@ -87,7 +82,7 @@ python dispatcher_agent.py
 
 - **Price Interface** (`app.py`): Web UI for current stock prices
 - **Chart Interface** (`chart_web.py`): Web UI for historical charts
-- **Unified Interface** (`unified_app.py`): Combined web UI that handles both types of queries
+- **Unified Interface** (`app.py`): Combined web UI that handles both types of queries
 
 ## Example Queries
 
