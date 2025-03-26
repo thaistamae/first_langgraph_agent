@@ -1,6 +1,5 @@
 import gradio as gr
-from langchain_core.messages import HumanMessage
-from chart_agent import chart_app, ChartAgentState, fetch_chart_data, create_chart_html
+from chart_agent import fetch_chart_data, create_chart_html
 from price_agent import get_ticker_symbol
 import re
 import pandas as pd

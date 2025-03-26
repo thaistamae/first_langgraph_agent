@@ -148,4 +148,4 @@ if __name__ == "__main__":
         print(f"Error running the workflow: {str(e)}")
 
 # Export these for the Gradio interface
-__all__ = ['app', 'AgentState', 'get_ticker_symbol', 'search_symbol', 'fetch_company_info']
+__all__ = ['app', 'AgentState', 'get_ticker_symbol', 'search_symbol']

@@ -258,4 +258,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Error running the workflow: {str(e)}")
 
-__all__ = ['dispatcher_app', 'DispatcherState', 'detect_request_type'] 
+__all__ = ['dispatcher_app', 'DispatcherState'] 

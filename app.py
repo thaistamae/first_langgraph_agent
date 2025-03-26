@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from typing import Dict, Any, List, Tuple, Optional
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage
-from dispatcher_agent import dispatcher_app, DispatcherState, detect_request_type
+from dispatcher_agent import dispatcher_app, DispatcherState
 from chart_web import extract_plotly_data, direct_chart_creation
 
 load_dotenv()
