@@ -12,17 +12,13 @@ load_dotenv()
 
 def convert_to_chat_format(content: str) -> List[Tuple[str, str]]:
     """Convert agent response to chat format for Gradio"""
-    # Check if this is a chart response (contains HTML for plotly)
     if "Stock Chart for" in content and "<div id=" in content:
-        # Extract the text portion before the chart
         text_part = content.split("<div id=")[0].strip()
         
-        # Create HTML for the text part
         formatted_html = f"<div style='background-color: #f0f8ff; padding: 15px; border-radius: 10px;'>{text_part}</div>"
         
         return [(None, formatted_html)]
     
-    # Handle price information response
     lines = content.strip().split('\n')
     formatted_html = "<div style='background-color: #f0f8ff; padding: 15px; border-radius: 10px;'>"
     
@@ -58,11 +54,9 @@ def extract_chart_from_response(content: str) -> Optional[go.Figure]:
     if "<div id=" not in content:
         return None
     
-    # Extract the plotly part
     html_content = content.split("<div id=")[1]
     html_content = "<div id=" + html_content
     
-    # Try to extract plotly data from HTML
     data, layout = extract_plotly_data(html_content)
     if data and layout:
         fig = go.Figure(data=data, layout=layout)
@@ -75,7 +69,6 @@ def process_user_query(query: str) -> Tuple[List[Tuple[str, str]], Optional[go.F
     if not query:
         return [(None, "<p>Please enter a company name or query.</p>")], None
     
-    # Initialize agent state
     initial_state: DispatcherState = {
         "messages": [HumanMessage(content=query)],
         "request_type": None,
@@ -88,10 +81,8 @@ def process_user_query(query: str) -> Tuple[List[Tuple[str, str]], Optional[go.F
     }
     
     try:
-        # Invoke the dispatcher agent
         result = dispatcher_app.invoke(initial_state)
         
-        # Get the AI response and check if it's a chart request
         ai_content = None
         is_chart_request = False
         ticker = ""
@@ -99,7 +90,6 @@ def process_user_query(query: str) -> Tuple[List[Tuple[str, str]], Optional[go.F
         interval = "1d"
         
         if result:
-            # Extract parameters from result
             if "request_type" in result and result["request_type"] == "chart":
                 is_chart_request = True
             
@@ -112,7 +102,6 @@ def process_user_query(query: str) -> Tuple[List[Tuple[str, str]], Optional[go.F
             if "interval" in result and result["interval"]:
                 interval = result["interval"]
                 
-            # Get AI response
             if "messages" in result and len(result["messages"]) > 1:
                 for message in result["messages"]:
                     if isinstance(message, AIMessage):
@@ -121,11 +110,9 @@ def process_user_query(query: str) -> Tuple[List[Tuple[str, str]], Optional[go.F
         if not ai_content:
             return [(None, "<p>No response from the agent.</p>")], None
         
-        # For chart requests, directly create a chart using chart_web's function
         if is_chart_request and ticker:
             fig, message = direct_chart_creation(ticker, time_range, interval)
             if fig:
-                # Create a formatted message for the chatbot
                 formatted_message = f"""
                 ## Stock Chart for {ticker}
                 
@@ -135,7 +122,6 @@ def process_user_query(query: str) -> Tuple[List[Tuple[str, str]], Optional[go.F
                 chat_response = [(None, f"<div style='background-color: #f0f8ff; padding: 15px; border-radius: 10px;'>{formatted_message}</div>")]
                 return chat_response, fig
         
-        # If direct chart creation failed or this is a price request, use the agent response
         chart = extract_chart_from_response(ai_content)
         chat_response = convert_to_chat_format(ai_content)
         
@@ -185,14 +171,11 @@ def create_interface():
         def handle_query(query):
             chat_response, chart = process_user_query(query)
             
-            # Show the appropriate outputs
             if chart:
                 return chat_response, chart
             else:
-                # Return empty chart if no chart data
                 return chat_response, None
         
-        # Set up event handlers
         submit_btn.click(
             fn=handle_query,
             inputs=query_input,
@@ -220,7 +203,6 @@ def create_interface():
     
     return demo
 
-# Launch the app
 if __name__ == "__main__":
     interface = create_interface()
     interface.launch() 

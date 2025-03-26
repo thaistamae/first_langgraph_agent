@@ -28,19 +28,16 @@ def detect_request_type(query: str) -> str:
     """
     query = query.lower()
     
-    # Keywords that indicate a chart request
     chart_keywords = [
         "chart", "graph", "historical", "history", "trend", "trends", "performance", 
         "over time", "last week", "last month", "last year", "past", "movement",
         "plot", "range", "interval"
     ]
     
-    # Check for chart keywords
     for keyword in chart_keywords:
         if keyword in query:
             return "chart"
     
-    # Default to price request (current data)
     return "price"
 
 def extract_query_params(query: str) -> Tuple[str, Optional[str], Optional[str]]:
@@ -52,10 +49,9 @@ def extract_query_params(query: str) -> Tuple[str, Optional[str], Optional[str]]
     """
     query = query.lower()
     ticker_symbol = ""
-    time_range = "1mo"  # Default
-    interval = "1d"  # Default
-    
-    # Extract time range if present
+    time_range = "1mo"  
+    interval = "1d"  
+
     range_mapping = {
         "day": "1d",
         "week": "5d",
@@ -74,7 +70,6 @@ def extract_query_params(query: str) -> Tuple[str, Optional[str], Optional[str]]
             time_range = range_value
             break
     
-    # Extract interval if present
     interval_mapping = {
         "daily": "1d",
         "weekly": "1wk",
@@ -86,11 +81,9 @@ def extract_query_params(query: str) -> Tuple[str, Optional[str], Optional[str]]
             interval = interval_value
             break
     
-    # First try to extract company name or ticker
     words = query.split()
     potential_tickers = []
     
-    # Common company names and dictionary mappings
     common_companies = {
         "apple": "AAPL",
         "google": "GOOGL", 
@@ -103,23 +96,18 @@ def extract_query_params(query: str) -> Tuple[str, Optional[str], Optional[str]]
         "nvidia": "NVDA"
     }
     
-    # Check for common companies
     for company, ticker in common_companies.items():
         if company in query:
             return ticker, time_range, interval
     
-    # Check for uppercase ticker symbols (like AAPL, MSFT)
     for word in words:
-        # If it looks like a ticker (all caps, 1-5 letters)
         if word.isupper() and 1 <= len(word) <= 5 and word.isalpha():
             potential_tickers.append(word)
     
     if potential_tickers:
         return potential_tickers[0], time_range, interval
     
-    # If no explicit ticker found, try the first few words
-    # This is a simplistic approach - in a real system you'd want better NER
-    search_text = " ".join(words[:3])  # Use first few words
+    search_text = " ".join(words[:3])  
     ticker = get_ticker_symbol(search_text)
     
     return ticker, time_range, interval
@@ -141,7 +129,6 @@ def classify_request(state: DispatcherState) -> DispatcherState:
         state_copy["query"] = user_input
         state_copy["request_type"] = detect_request_type(user_input)
         
-        # Extract ticker symbol and other parameters
         ticker, time_range, interval = extract_query_params(user_input)
         state_copy["ticker_symbol"] = ticker
         state_copy["time_range"] = time_range
@@ -157,25 +144,20 @@ def process_price_request(state: DispatcherState) -> DispatcherState:
     ticker = state_copy.get("ticker_symbol", "")
     
     try:
-        # Use the ticker directly rather than the full query
         price_state: PriceAgentState = {
             "messages": [HumanMessage(content=ticker)],
             "current_symbol": ""
         }
         
-        # Invoke the price agent
         result = price_app.invoke(price_state)
         
-        # Store the result
         state_copy["price_result"] = result
         
-        # Add the response to the messages
         if result and "messages" in result:
             for message in result["messages"]:
                 if isinstance(message, AIMessage):
                     state_copy["messages"].append(message)
     except Exception as e:
-        # Handle exceptions and add an error message to the state
         error_msg = f"Error processing price request: {str(e)}"
         state_copy["messages"].append(AIMessage(content=error_msg))
     
@@ -191,7 +173,6 @@ def process_chart_request(state: DispatcherState) -> DispatcherState:
     interval = state_copy.get("interval", "1d")
     
     try:
-        # Build a formatted query with explicit parameters
         formatted_query = f"{ticker} range:{time_range} interval:{interval}"
         
         chart_state: ChartAgentState = {
@@ -201,25 +182,20 @@ def process_chart_request(state: DispatcherState) -> DispatcherState:
             "error": None
         }
         
-        # Invoke the chart agent
         result = chart_app.invoke(chart_state)
         
-        # Store the result
         state_copy["chart_result"] = result
         
-        # Add the response to the messages
         if result and "messages" in result:
             for message in result["messages"]:
                 if isinstance(message, AIMessage):
                     state_copy["messages"].append(message)
     except Exception as e:
-        # Handle exceptions and add an error message to the state
         error_msg = f"Error processing chart request: {str(e)}"
         state_copy["messages"].append(AIMessage(content=error_msg))
     
     return state_copy
 
-# Define the router function that determines the next node
 def route_by_request_type(state: DispatcherState) -> str:
     """
     Routes to the appropriate agent based on request type
@@ -231,33 +207,25 @@ def route_by_request_type(state: DispatcherState) -> str:
     else:
         return "process_chart"
 
-# Create the workflow
 def create_dispatcher_workflow():
-    # Initialize the StateGraph with the DispatcherState
     workflow = StateGraph(DispatcherState)
     
-    # Add nodes
     workflow.add_node("classify_request", classify_request)
     workflow.add_node("process_price", process_price_request)
     workflow.add_node("process_chart", process_chart_request)
     
-    # Set entry point
     workflow.set_entry_point("classify_request")
     
-    # Add conditional edges from classify_request based on request type
     workflow.add_conditional_edges(
         "classify_request",
         route_by_request_type,
     )
     
-    # Add edges to END
     workflow.add_edge("process_price", END)
     workflow.add_edge("process_chart", END)
     
-    # Compile the workflow
     return workflow.compile()
 
-# Compile the workflow once at module level
 dispatcher_app = create_dispatcher_workflow()
 
 if __name__ == "__main__":
@@ -290,5 +258,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Error running the workflow: {str(e)}")
 
-# Export for the Gradio interface
 __all__ = ['dispatcher_app', 'DispatcherState', 'detect_request_type'] 
