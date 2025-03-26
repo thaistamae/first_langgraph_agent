@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 from typing import Dict, Any, List, TypedDict, Optional
 from langgraph.graph import Graph, END
 from langchain_core.messages import HumanMessage, AIMessage
+from main import get_ticker_symbol
 
 load_dotenv()
 
@@ -17,8 +18,6 @@ headers = {
     "X-RapidAPI-Key": RAPIDAPI_KEY,
     "X-RapidAPI-Host": "apidojo-yahoo-finance-v1.p.rapidapi.com"
 }
-
-from main import get_ticker_symbol
 
 class ChartAgentState(TypedDict):
     messages: List[HumanMessage | AIMessage]
