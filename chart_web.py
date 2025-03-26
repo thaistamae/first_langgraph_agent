@@ -1,7 +1,7 @@
 import gradio as gr
 from langchain_core.messages import HumanMessage
 from chart_agent import chart_app, ChartAgentState, fetch_chart_data, create_chart_html
-from main import get_ticker_symbol
+from price_agent import get_ticker_symbol
 import re
 import pandas as pd
 import plotly.graph_objects as go

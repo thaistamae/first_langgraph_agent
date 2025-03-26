@@ -50,21 +50,17 @@ def get_ticker_symbol(query: str) -> str:
     """
     Convert company name to ticker symbol or validate ticker
     """
-    # Check if it's already a valid ticker-like symbol (all caps, 1-5 characters)
     if query.isupper() and 1 <= len(query) <= 5:
         return query
     
-    # Check if it's in our common company dictionary
     normalized_query = query.lower().strip()
     if normalized_query in COMPANY_TO_TICKER:
         return COMPANY_TO_TICKER[normalized_query]
     
-    # Try to search for the symbol using the API
     symbol = search_symbol(query)
     if symbol:
         return symbol
     
-    # If all else fails, just return the original (will likely fail later)
     return query.upper()
 
 def fetch_company_info(symbol: str) -> Dict[str, Any]:
@@ -88,7 +84,6 @@ def process_query(state: AgentState) -> AgentState:
     if isinstance(last_message, HumanMessage):
         user_input = last_message.content.strip()
         
-        # Convert company name to ticker symbol if needed
         symbol = get_ticker_symbol(user_input)
         state["current_symbol"] = symbol
         
@@ -118,19 +113,14 @@ def process_query(state: AgentState) -> AgentState:
 
     return state
 
-# Create the graph
 workflow = Graph()
 
-# Add the processing node
 workflow.add_node("process_query", process_query)
 
-# Set the entry point
 workflow.set_entry_point("process_query")
 
-# Add edge from process_query to end
 workflow.add_edge("process_query", END)
 
-# Compile the graph
 app = workflow.compile()
 
 if __name__ == "__main__":
@@ -149,7 +139,6 @@ if __name__ == "__main__":
         result = app.invoke(initial_state)
         
         if result and "messages" in result:
-            # Print only the AI messages
             for message in result["messages"]:
                 if isinstance(message, AIMessage):
                     print(f"\n{message.content}\n")

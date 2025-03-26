@@ -1,15 +1,29 @@
 import os
 import gradio as gr
-from typing import List, Tuple
+import re
+import plotly.graph_objects as go
+from typing import Dict, Any, List, Tuple, Optional
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage
-from main import app, AgentState, get_ticker_symbol
+from dispatcher_agent import dispatcher_app, DispatcherState, detect_request_type
+from chart_web import extract_plotly_data, direct_chart_creation
 
 load_dotenv()
 
-def convert_to_chat_format(company_info: str) -> List[Tuple[str, str]]:
+def convert_to_chat_format(content: str) -> List[Tuple[str, str]]:
     """Convert agent response to chat format for Gradio"""
-    lines = company_info.strip().split('\n')
+    # Check if this is a chart response (contains HTML for plotly)
+    if "Stock Chart for" in content and "<div id=" in content:
+        # Extract the text portion before the chart
+        text_part = content.split("<div id=")[0].strip()
+        
+        # Create HTML for the text part
+        formatted_html = f"<div style='background-color: #f0f8ff; padding: 15px; border-radius: 10px;'>{text_part}</div>"
+        
+        return [(None, formatted_html)]
+    
+    # Handle price information response
+    lines = content.strip().split('\n')
     formatted_html = "<div style='background-color: #f0f8ff; padding: 15px; border-radius: 10px;'>"
     
     if lines and "Company Information" in lines[0]:
@@ -33,87 +47,180 @@ def convert_to_chat_format(company_info: str) -> List[Tuple[str, str]]:
         
         formatted_html += "</table>"
     else:
-        formatted_html += f"<p>{company_info}</p>"
+        formatted_html += f"<p>{content}</p>"
     
     formatted_html += "</div>"
     
     return [(None, formatted_html)]
 
-def get_company_info(company_input: str) -> List[Tuple[str, str]]:
-    """Get company information and return in chat format"""
-    if not company_input:
-        return [(None, "<p>Please enter a company name or ticker symbol.</p>")]
+def extract_chart_from_response(content: str) -> Optional[go.Figure]:
+    """Extract a plotly chart from the response if available"""
+    if "<div id=" not in content:
+        return None
     
-    ticker = get_ticker_symbol(company_input)
+    # Extract the plotly part
+    html_content = content.split("<div id=")[1]
+    html_content = "<div id=" + html_content
     
-    initial_state: AgentState = {
-        "messages": [HumanMessage(content=company_input)],
-        "current_symbol": ""
+    # Try to extract plotly data from HTML
+    data, layout = extract_plotly_data(html_content)
+    if data and layout:
+        fig = go.Figure(data=data, layout=layout)
+        return fig
+    
+    return None
+
+def process_user_query(query: str) -> Tuple[List[Tuple[str, str]], Optional[go.Figure]]:
+    """Process user query and return chat format and chart (if available)"""
+    if not query:
+        return [(None, "<p>Please enter a company name or query.</p>")], None
+    
+    # Initialize agent state
+    initial_state: DispatcherState = {
+        "messages": [HumanMessage(content=query)],
+        "request_type": None,
+        "query": "",
+        "ticker_symbol": "",
+        "time_range": None,
+        "interval": None,
+        "price_result": None,
+        "chart_result": None
     }
     
     try:
-        result = app.invoke(initial_state)
+        # Invoke the dispatcher agent
+        result = dispatcher_app.invoke(initial_state)
         
-        if result and "messages" in result:
-            for message in result["messages"]:
-                if isinstance(message, AIMessage):
-                    return convert_to_chat_format(message.content)
+        # Get the AI response and check if it's a chart request
+        ai_content = None
+        is_chart_request = False
+        ticker = ""
+        time_range = "1mo"
+        interval = "1d"
         
-        return [(None, "<p>Error: No information found for this company.</p>")]
+        if result:
+            # Extract parameters from result
+            if "request_type" in result and result["request_type"] == "chart":
+                is_chart_request = True
+            
+            if "ticker_symbol" in result:
+                ticker = result["ticker_symbol"]
+                
+            if "time_range" in result and result["time_range"]:
+                time_range = result["time_range"]
+                
+            if "interval" in result and result["interval"]:
+                interval = result["interval"]
+                
+            # Get AI response
+            if "messages" in result and len(result["messages"]) > 1:
+                for message in result["messages"]:
+                    if isinstance(message, AIMessage):
+                        ai_content = message.content
+        
+        if not ai_content:
+            return [(None, "<p>No response from the agent.</p>")], None
+        
+        # For chart requests, directly create a chart using chart_web's function
+        if is_chart_request and ticker:
+            fig, message = direct_chart_creation(ticker, time_range, interval)
+            if fig:
+                # Create a formatted message for the chatbot
+                formatted_message = f"""
+                ## Stock Chart for {ticker}
+                
+                Time Range: {time_range}
+                Interval: {interval}
+                """
+                chat_response = [(None, f"<div style='background-color: #f0f8ff; padding: 15px; border-radius: 10px;'>{formatted_message}</div>")]
+                return chat_response, fig
+        
+        # If direct chart creation failed or this is a price request, use the agent response
+        chart = extract_chart_from_response(ai_content)
+        chat_response = convert_to_chat_format(ai_content)
+        
+        return chat_response, chart
     
     except Exception as e:
-        return [(None, f"<p>Error: {str(e)}</p>")]
+        return [(None, f"<p>Error: {str(e)}</p>")], None
 
-with gr.Blocks(theme=gr.themes.Soft(), title="Company Info Agent") as demo:
-    gr.Markdown("""
-    # 🏢 Company Information Agent
-    
-    Enter a company name (e.g., "Apple") or ticker symbol (e.g., "AAPL") to get the latest financial information.
-    """)
-    
-    with gr.Row():
-        with gr.Column():
-            company_input = gr.Textbox(
-                label="Company Name or Ticker Symbol",
-                placeholder="Enter company name or ticker (e.g., Apple, MSFT, Tesla)",
-                lines=1
-            )
-            submit_btn = gr.Button("Get Info", variant="primary")
+def create_interface():
+    """
+    Create the unified Gradio interface
+    """
+    with gr.Blocks(theme=gr.themes.Soft(), title="Financial Data Agent") as demo:
+        gr.Markdown("""
+        # 📈 Financial Data Agent
         
-    chatbot = gr.Chatbot(
-        label="Company Information",
-        height=400,
-        show_label=True,
-        show_share_button=False,
-        avatar_images=(None, None)
-    )
+        Ask for stock price information or historical charts for any company.
+        
+        Examples:
+        - "What's the current price of Apple?"
+        - "Show me a chart for Tesla over the last 6 months"
+        - "Microsoft stock price"
+        - "Amazon historical performance"
+        """)
+        
+        with gr.Row():
+            with gr.Column():
+                query_input = gr.Textbox(
+                    label="Your Query",
+                    placeholder="Enter a company name or ask about a stock (e.g., 'Apple stock price' or 'Show me a chart for Tesla')",
+                    lines=2
+                )
+                submit_btn = gr.Button("Get Information", variant="primary")
+        
+        with gr.Row():
+            with gr.Column(scale=1):
+                chatbot = gr.Chatbot(
+                    label="Information",
+                    height=300,
+                    show_label=True,
+                    show_share_button=False,
+                    avatar_images=(None, None)
+                )
+            with gr.Column(scale=1):
+                chart_output = gr.Plot(label="Stock Chart", visible=True)
+        
+        def handle_query(query):
+            chat_response, chart = process_user_query(query)
+            
+            # Show the appropriate outputs
+            if chart:
+                return chat_response, chart
+            else:
+                # Return empty chart if no chart data
+                return chat_response, None
+        
+        # Set up event handlers
+        submit_btn.click(
+            fn=handle_query,
+            inputs=query_input,
+            outputs=[chatbot, chart_output]
+        )
+        query_input.submit(
+            fn=handle_query,
+            inputs=query_input,
+            outputs=[chatbot, chart_output]
+        )
+        
+        gr.Markdown("""
+        ### How to use
+        1. Type your query about a company or stock in the input box
+        2. Press "Get Information" or hit Enter
+        3. View the information or chart
+        
+        ### Example queries
+        - "What's the current price of Apple?"
+        - "Show me a chart for Tesla"
+        - "MSFT stock price"
+        - "Amazon chart over the last 3 months"
+        - "NVDA historical performance"
+        """)
     
-    # Set up event handlers
-    submit_btn.click(
-        fn=get_company_info,
-        inputs=company_input,
-        outputs=chatbot
-    )
-    company_input.submit(
-        fn=get_company_info,
-        inputs=company_input,
-        outputs=chatbot
-    )
-    
-    gr.Markdown("""
-    ### How to use
-    1. Type a company name or ticker symbol in the input box
-    2. Press "Get Info" or hit Enter
-    3. View the latest financial information for the company
-    
-    ### Examples
-    - Apple
-    - MSFT
-    - Tesla
-    - AMZN
-    - Google
-    """)
+    return demo
 
 # Launch the app
 if __name__ == "__main__":
-    demo.launch(share=False) 
+    interface = create_interface()
+    interface.launch() 
