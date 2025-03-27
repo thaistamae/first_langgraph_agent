@@ -22,6 +22,7 @@ A LangGraph-powered application that provides stock information and charts using
 - **Real-time Price Data**: Get current stock prices and key financial metrics
 - **Historical Charts**: View stock performance over different time periods with interactive charts
 - **Natural Language Understanding**: Parse queries like "What's the current price of Apple?" or "Show me a chart for Tesla over the last 6 months"
+- **LLM-Powered Query Understanding**: Uses Hugging Face models to better understand and extract information from natural language queries
 
 ## Setup
 
@@ -30,12 +31,15 @@ A LangGraph-powered application that provides stock information and charts using
 pip install -r requirements.txt
 ```
 
-2. Create a `.env` file in the root directory and add your RapidAPI key:
+2. Create a `.env` file in the root directory and add your RapidAPI key and Hugging Face token:
 ```
 RAPIDAPI_KEY=your_api_key_here
+HUGGINGFACE_TOKEN=your_huggingface_token_here
 ```
 
-3. You'll need to sign up for a RapidAPI key at https://rapidapi.com to use the Yahoo Finance API.
+3. You'll need to:
+   - Sign up for a RapidAPI key at https://rapidapi.com to use the Yahoo Finance API
+   - Create a Hugging Face account at https://huggingface.co and generate a token from your user settings
 
 ## Usage
 

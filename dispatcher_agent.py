@@ -3,10 +3,22 @@ from dotenv import load_dotenv
 from typing import Dict, Any, List, TypedDict, Optional, Callable, Literal, Annotated, cast, Tuple
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain.llms import HuggingFaceEndpoint
+from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
 from price_agent import app as price_app, AgentState as PriceAgentState, get_ticker_symbol, search_symbol
 from chart_agent import chart_app as chart_app, ChartAgentState
 
 load_dotenv()
+
+# Initialize HuggingFace model
+HF_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
+llm = HuggingFaceEndpoint(
+    repo_id="mistralai/Mistral-7B-Instruct-v0.2",  # More powerful instruction model
+    task="text-generation",
+    max_new_tokens=512,
+    temperature=0.1,
+    huggingfacehub_api_token=HF_TOKEN,
+)
 
 class DispatcherState(TypedDict, total=False):
     messages: List[HumanMessage | AIMessage]
@@ -18,103 +30,156 @@ class DispatcherState(TypedDict, total=False):
     price_result: Optional[Dict[str, Any]]
     chart_result: Optional[Dict[str, Any]]
 
-def detect_request_type(query: str) -> str:
+# System prompt template for financial data extraction
+SYSTEM_PROMPT = """
+You are a financial assistant specialized in understanding stock queries.
+
+When a user asks about stock information, carefully analyze their query to extract:
+
+1. The company name or ticker symbol mentioned
+2. Whether they want current price information or historical chart data
+3. Any time range mentioned (day, week, month, 3 months, 6 months, year, 5 years)
+4. Any interval preference (daily, weekly, monthly)
+
+For well-known companies, you know their ticker symbols:
+- Apple = AAPL
+- Microsoft = MSFT
+- Amazon = AMZN
+- Google/Alphabet = GOOGL
+- Meta/Facebook = META
+- Tesla = TSLA
+- Netflix = NFLX
+- Nvidia = NVDA
+- ServiceNow = NOW
+- Salesforce = CRM
+- IBM = IBM
+- Oracle = ORCL
+- CrowdStrike = CRWD
+- AMD = AMD
+- Intel = INTC
+
+Your job is to parse the query: "{query}"
+
+Respond with a JSON object containing exactly these fields:
+{{
+  "request_type": "price" or "chart",
+  "ticker": the ticker symbol (if you can determine it) or company name (if you're not sure of ticker),
+  "time_range": preferred time range code or "1mo" if not specified,
+  "interval": preferred interval code or "1d" if not specified
+}}
+
+Time range codes: "1d" (day), "5d" (week), "1mo" (month), "3mo" (3 months), "6mo" (6 months), "1y" (year), "5y" (5 years)
+Interval codes: "1d" (daily), "1wk" (weekly), "1mo" (monthly)
+
+If the user mentions historical data, trends, charts, or graphs, classify as "chart", otherwise "price".
+"""
+
+def extract_financial_data(query: str) -> Dict[str, Any]:
     """
-    Detect the type of request from the user query
+    Extract financial data from query using the LLM
     
     Returns:
-        "price" for current price requests
-        "chart" for historical chart requests
+        Dictionary with request_type, ticker, time_range, and interval
     """
-    query = query.lower()
-    
-    chart_keywords = [
-        "chart", "graph", "historical", "history", "trend", "trends", "performance", 
-        "over time", "last week", "last month", "last year", "past", "movement",
-        "plot", "range", "interval"
-    ]
-    
-    for keyword in chart_keywords:
-        if keyword in query:
-            return "chart"
-    
-    return "price"
+    try:
+        print(f"[DEBUG] Extracting financial data from: '{query}'")
+        
+        # Format the prompt with the user query
+        prompt = SYSTEM_PROMPT.format(query=query)
+        
+        # Get LLM response
+        response = llm.invoke(prompt)
+        print(f"[DEBUG] LLM raw response: {response}")
+        
+        # Extract JSON from response
+        import json
+        import re
+        
+        # First, try to find JSON in the response
+        json_match = re.search(r'({.*})', response.replace('\n', ' '), re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+            # Handle potential issues with JSON formatting
+            json_str = json_str.replace("'", '"')
+            try:
+                result = json.loads(json_str)
+                print(f"[DEBUG] Parsed result: {result}")
+                return result
+            except json.JSONDecodeError:
+                print(f"[DEBUG] JSON parsing error with: {json_str}")
+        
+        # If JSON extraction fails, try a more robust approach
+        print("[DEBUG] Falling back to regex extraction")
+        
+        # Extract request_type
+        request_type = "price"
+        if re.search(r'"request_type"\s*:\s*"chart"', response):
+            request_type = "chart"
+        
+        # Extract ticker
+        ticker_match = re.search(r'"ticker"\s*:\s*"([^"]+)"', response)
+        ticker = ticker_match.group(1) if ticker_match else ""
+        
+        # Extract time_range
+        time_range_match = re.search(r'"time_range"\s*:\s*"([^"]+)"', response)
+        time_range = time_range_match.group(1) if time_range_match else "1mo"
+        
+        # Extract interval
+        interval_match = re.search(r'"interval"\s*:\s*"([^"]+)"', response)
+        interval = interval_match.group(1) if interval_match else "1d"
+        
+        result = {
+            "request_type": request_type,
+            "ticker": ticker,
+            "time_range": time_range,
+            "interval": interval
+        }
+        
+        print(f"[DEBUG] Regex extracted result: {result}")
+        return result
+        
+    except Exception as e:
+        print(f"[DEBUG] Error extracting financial data: {str(e)}")
+        # Return defaults if extraction fails
+        return {
+            "request_type": "price",
+            "ticker": "",
+            "time_range": "1mo",
+            "interval": "1d"
+        }
 
-def extract_query_params(query: str) -> Tuple[str, Optional[str], Optional[str]]:
+def get_stock_ticker(company_name: str) -> str:
     """
-    Extract ticker symbol, time range, and interval from query
+    Get the stock ticker from a company name
     
     Returns:
-        Tuple of (ticker_symbol, time_range, interval)
+        Stock ticker if found, otherwise empty string
     """
-    query = query.lower()
-    ticker_symbol = ""
-    time_range = "1mo"  
-    interval = "1d"  
-
-    range_mapping = {
-        "day": "1d",
-        "week": "5d",
-        "month": "1mo",
-        "3 month": "3mo",
-        "three month": "3mo",
-        "6 month": "6mo", 
-        "six month": "6mo",
-        "year": "1y",
-        "5 year": "5y",
-        "five year": "5y"
-    }
+    print(f"[DEBUG] Looking up ticker for: '{company_name}'")
     
-    for time_desc, range_value in range_mapping.items():
-        if time_desc in query:
-            time_range = range_value
-            break
+    # Check if the company name looks like a ticker already (all caps, 1-5 chars)
+    if company_name.isupper() and 1 <= len(company_name) <= 5 and company_name.isalpha():
+        print(f"[DEBUG] Company name '{company_name}' looks like a ticker already")
+        return company_name
     
-    interval_mapping = {
-        "daily": "1d",
-        "weekly": "1wk",
-        "monthly": "1mo"
-    }
+    # Try to get the ticker using the search_symbol function
+    ticker = search_symbol(company_name)
+    if ticker:
+        print(f"[DEBUG] Found ticker '{ticker}' for '{company_name}' via search")
+        return ticker
     
-    for interval_desc, interval_value in interval_mapping.items():
-        if interval_desc in query:
-            interval = interval_value
-            break
-    
-    words = query.split()
-    potential_tickers = []
-    
-    common_companies = {
-        "apple": "AAPL",
-        "google": "GOOGL", 
-        "microsoft": "MSFT",
-        "amazon": "AMZN",
-        "tesla": "TSLA",
-        "facebook": "META",
-        "meta": "META",
-        "netflix": "NFLX",
-        "nvidia": "NVDA"
-    }
-    
-    for company, ticker in common_companies.items():
-        if company in query:
-            return ticker, time_range, interval
-    
-    for word in words:
-        if word.isupper() and 1 <= len(word) <= 5 and word.isalpha():
-            potential_tickers.append(word)
-    
-    if potential_tickers:
-        return potential_tickers[0], time_range, interval
-    
-    search_text = " ".join(words[:3])  
-    ticker = get_ticker_symbol(search_text)
-    
-    return ticker, time_range, interval
+    # If that fails, try the more direct get_ticker_symbol approach
+    ticker = get_ticker_symbol(company_name)
+    if ticker:
+        print(f"[DEBUG] Found ticker '{ticker}' for '{company_name}' via direct lookup")
+        return ticker
+        
+    print(f"[DEBUG] Could not find ticker for '{company_name}'")
+    return ""
 
 def classify_request(state: DispatcherState) -> DispatcherState:
     """
-    Classify the user request as either price or chart and extract parameters
+    Classify the user request and extract parameters using LLM
     """
     state_copy = state.copy()
     
@@ -127,9 +192,34 @@ def classify_request(state: DispatcherState) -> DispatcherState:
     if isinstance(last_message, HumanMessage):
         user_input = last_message.content.strip()
         state_copy["query"] = user_input
-        state_copy["request_type"] = detect_request_type(user_input)
         
-        ticker, time_range, interval = extract_query_params(user_input)
+        print(f"\n[DEBUG] Processing query: '{user_input}'")
+        
+        # Extract financial data using LLM
+        extracted_data = extract_financial_data(user_input)
+        
+        # Set request type
+        request_type = extracted_data.get("request_type", "price")
+        state_copy["request_type"] = request_type
+        print(f"[DEBUG] Request type: {request_type}")
+        
+        # Get company name or ticker
+        company_or_ticker = extracted_data.get("ticker", "")
+        print(f"[DEBUG] Extracted company/ticker: '{company_or_ticker}'")
+        
+        # If we have a company name/ticker, try to get the actual ticker
+        ticker = ""
+        if company_or_ticker:
+            ticker = get_stock_ticker(company_or_ticker)
+        
+        # Set other parameters
+        time_range = extracted_data.get("time_range", "1mo")
+        interval = extracted_data.get("interval", "1d")
+        
+        print(f"[DEBUG] Final ticker: '{ticker}'")
+        print(f"[DEBUG] Time range: '{time_range}'")
+        print(f"[DEBUG] Interval: '{interval}'")
+        
         state_copy["ticker_symbol"] = ticker
         state_copy["time_range"] = time_range
         state_copy["interval"] = interval
@@ -142,6 +232,12 @@ def process_price_request(state: DispatcherState) -> DispatcherState:
     """
     state_copy = state.copy()
     ticker = state_copy.get("ticker_symbol", "")
+    
+    # Handle empty ticker case
+    if not ticker:
+        error_msg = "I couldn't identify a valid stock ticker from your query. Could you please specify the company name more clearly?"
+        state_copy["messages"].append(AIMessage(content=error_msg))
+        return state_copy
     
     try:
         price_state: PriceAgentState = {
@@ -171,6 +267,12 @@ def process_chart_request(state: DispatcherState) -> DispatcherState:
     ticker = state_copy.get("ticker_symbol", "")
     time_range = state_copy.get("time_range", "1mo")
     interval = state_copy.get("interval", "1d")
+    
+    # Handle empty ticker case
+    if not ticker:
+        error_msg = "I couldn't identify a valid stock ticker from your query. Could you please specify the company name more clearly?"
+        state_copy["messages"].append(AIMessage(content=error_msg))
+        return state_copy
     
     try:
         formatted_query = f"{ticker} range:{time_range} interval:{interval}"

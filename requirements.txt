@@ -6,3 +6,6 @@ langchain-core
 pandas
 plotly
 gradio
+langchain-huggingface
+huggingface_hub
+transformers
